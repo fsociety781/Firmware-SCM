@@ -43,12 +43,12 @@ void pumpControlTask(void *parameter) {
 }
 
 void sendDataTask(void *parameter) {
-  while (true) {
+  for (;;) {
     dataSensor::DHT_Values dhtValues = dataSensor::getValues();
 
     DateTime now = rtc.now();
     char time[50];
-    sprintf(time, "%02d:%02d %d/%d/%d", now.hour(), now.minute(), now.day(), now.month(), now.year());
+    sprintf(time, "%d/%d/%d %02d:%02d:%02d", now.year(), now.month(), now.day(), now.hour(), now.minute(), now.second());
     waktu = time;
 
     dtostrf(dhtValues.suhu, 6, 2, temp_str);
@@ -65,25 +65,28 @@ void sendDataTask(void *parameter) {
   }
 }
 
-void history() {
-  dataSensor::DHT_Values dhtValues = dataSensor::getValues();
+void historyDataTask(void *parameter) {
+  for (;;) {
+    dataSensor::DHT_Values dhtValues = dataSensor::getValues();
+    DateTime now = rtc.now();
+    char time[50];
+    sprintf(time, "%d/%d/%d %02d:%02d:%02d",now.year(), now.month(), now.day(), now.hour(), now.minute(), now.second());
+    waktu = time;
 
-  DateTime now = rtc.now();
-  char time[50];
-  sprintf(time, "%02d:%02d %d/%d/%d", now.hour(), now.minute(), now.day(), now.month(), now.year());
-  waktu = time;
-
-  dtostrf(dhtValues.suhu, 6, 2, temp_str);
-  dtostrf(dhtValues.kelembaban, 6, 2, humi_str);
-  DynamicJsonDocument jsonDocument(200);
-  jsonDocument["suhu"] = temp_str;
-  jsonDocument["kelembaban"] = humi_str;
-  jsonDocument["waktu"] = waktu;
-  jsonDocument["fan"] = statusFan ? "ON" : "OFF";
-  jsonDocument["pump"] = statusPump ? "ON" : "OFF";
-  String output;
-  serializeJson(jsonDocument, output);
-  client.publish(History, output.c_str());
+    dtostrf(dhtValues.suhu, 6, 2, temp_str);
+    dtostrf(dhtValues.kelembaban, 6, 2, humi_str);
+    DynamicJsonDocument jsonDocument(200);
+    jsonDocument["suhu"] = temp_str;
+    jsonDocument["kelembaban"] = humi_str;
+    jsonDocument["waktu"] = waktu;
+    jsonDocument["fan"] = statusFan ? "ON" : "OFF";
+    jsonDocument["pump"] = statusPump ? "ON" : "OFF";
+    String output;
+    serializeJson(jsonDocument, output);
+    client.publish(History, output.c_str());
+    
+    vTaskDelay(pdMS_TO_TICKS(10000));
+  }
 }
 
 void messageReceived(char *topic, byte *payload, unsigned int length) {
@@ -102,28 +105,43 @@ void messageReceived(char *topic, byte *payload, unsigned int length) {
     EEPROM.commit();
     Serial.println("Data Berhasil di simpan");
   } else if (strcmp(topic, setPointSW) == 0) {
-    setSchedule1.AH1 = jsonDocument["jam1"].as<int>();
-    setSchedule1.AM1 = jsonDocument["menit1"].as<int>();
-    setSchedule1.AH2 = jsonDocument["jam2"].as<int>();
-    setSchedule1.AM2 = jsonDocument["menit2"].as<int>();
-    setSchedule1.AH3 = jsonDocument["jam3"].as<int>();
-    setSchedule1.AM3 = jsonDocument["menit3"].as<int>();
-    EEPROM.put(Address.addresAH1, setSchedule1.AH1);
-    EEPROM.put(Address.addresAM1, setSchedule1.AM1);
-    EEPROM.put(Address.addresAH2, setSchedule1.AH2);
-    EEPROM.put(Address.addresAM2, setSchedule1.AM2);
-    EEPROM.put(Address.addresAH3, setSchedule1.AH3);
-    EEPROM.put(Address.addresAM3, setSchedule1.AM3);
-    EEPROM.commit();
-    Serial.println("Data Schedule Berhasil di simpan");
+   if (jsonDocument.containsKey("jam1") && jsonDocument.containsKey("menit1")) {
+        setSchedule1.AH1 = jsonDocument["jam1"].as<int>();
+        setSchedule1.AM1 = jsonDocument["menit1"].as<int>();
+        EEPROM.put(Address.addresAH1, setSchedule1.AH1);
+        EEPROM.put(Address.addresAM1, setSchedule1.AM1);
+        EEPROM.commit();
+        Serial.println("Data Jadwal 1 Berhasil disimpan");
+    } else if (jsonDocument.containsKey("jam2") && jsonDocument.containsKey("menit2")) {
+        setSchedule1.AH2 = jsonDocument["jam2"].as<int>();
+        setSchedule1.AM2 = jsonDocument["menit2"].as<int>();
+        EEPROM.put(Address.addresAH2, setSchedule1.AH2);
+        EEPROM.put(Address.addresAM2, setSchedule1.AM2);
+        EEPROM.commit();
+        Serial.println("Data Jadwal 2 Berhasil disimpan");
+    } else if (jsonDocument.containsKey("jam3") && jsonDocument.containsKey("menit3")) {
+        setSchedule1.AH3 = jsonDocument["jam3"].as<int>();
+        setSchedule1.AM3 = jsonDocument["menit3"].as<int>();
+        EEPROM.put(Address.addresAH3, setSchedule1.AH3);
+        EEPROM.put(Address.addresAM3, setSchedule1.AM3);
+        EEPROM.commit();
+        Serial.println("Data Jadwal 3 Berhasil disimpan");
+    }
   } else if (strcmp(topic, setPointMW) == 0) {
     statusModeW = jsonDocument["mode"].as<String>();
-    Serial.println("Mode berhasil di rubah:");
+    Serial.println("Mode Kontrol :");
     Serial.print(statusModeW);
   } else if (strcmp(topic, ScheduleMode) == 0) {
     statusScheduleM = jsonDocument["Smode"].as<String>();
-    Serial.println("Mode Schedule berhasil di rubah:");
-    Serial.print(statusScheduleM);
+    lcd.clear();
+    lcd.setCursor(0, 1);
+    lcd.print("Schedule: ");
+    lcd.setCursor(0, 2);
+    lcd.print(statusScheduleM);
+    delay(1000);
+    lcd.clear();
+    state = 0;
+    return menuUtama();
   } else if (strcmp(topic, setTimeW) == 0) {
     setTimer.Min = jsonDocument["Menit"].as<int>();
     setTimer.Sec = jsonDocument["Detik"].as<int>();
@@ -201,13 +219,12 @@ void setup() {
       delay(2000);
     }
   }
-
   // timer.setInterval(5000, sendData);
-  timer.setInterval(10000, history);
+  // timer.setInterval(10000, history);
   PumpQueue = xQueueCreate(1, sizeof(int[2]));
   xTaskCreate(pumpControlTask, "Pump Control Task", 2048, NULL, 1, &PumpTaskHandle);
-  xTaskCreate(sendDataTask, "Send Data Task", 2048, NULL, 1, NULL);
-  // xTaskCreate(historyTask, "History Task", 2048, NULL, 1, NULL);
+  xTaskCreate(sendDataTask, "Send Data Task", 10000, NULL, 1, NULL);
+  xTaskCreate(historyDataTask, "History Task", 10000, NULL, 1, NULL);
   client.subscribe(subscribe);
   // client.subscribe(setPointW);
   // client.subscribe(setTime);
@@ -1001,7 +1018,7 @@ void setJadwal1() {
 }
 
 void setJadwal2() {
-    String Waktu;
+  String Waktu;
   StaticJsonDocument<200> docJam2;
   StaticJsonDocument<200> docMenit2;
   char jsonJam2[20];
@@ -1125,11 +1142,11 @@ void setJadwal3() {
           state = 0;
           return menuUtama();
         } else if (digitalRead(bUP) == tekan) {
-          setSchedule1.AM3 = (setSchedule1.AM3 + 1) % 24;
+          setSchedule1.AM3 = (setSchedule1.AM3 + 1) % 60;
           EEPROM.put(Address.addresAM3, setSchedule1.AM3);
           EEPROM.commit();
         } else if (digitalRead(bDN) == tekan) {
-          setSchedule1.AM3 = (setSchedule1.AM3 + 23) % 24;
+          setSchedule1.AM3 = (setSchedule1.AM3 + 59) % 60;
           EEPROM.put(Address.addresAM3, setSchedule1.AM3);
           EEPROM.commit();
         }
