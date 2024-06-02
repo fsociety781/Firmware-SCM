@@ -15,7 +15,6 @@ void pumpControlTask(void *parameter) {
   int duration[2];
 
   while (true) {
-    // Wait for a command from the queue
     if (xQueueReceive(PumpQueue, &duration, portMAX_DELAY)) {
       int Min = duration[0];
       int Sec = duration[1];
@@ -23,7 +22,7 @@ void pumpControlTask(void *parameter) {
 
       while (Min > 0 || Sec > 0) {
         digitalWrite(pump, HIGH);
-        vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(1000));  // delay for 1 second
+        vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(1000)); 
 
         Sec--;
         if (Sec < 0) {
@@ -60,7 +59,6 @@ void sendDataTask(void *parameter) {
     char jsonBuffer[200];
     serializeJson(jsonDocument, jsonBuffer);
     client.publish(Sensor_Topic, jsonBuffer);
-
     vTaskDelay(pdMS_TO_TICKS(5000));
   }
 }
@@ -78,6 +76,7 @@ void historyDataTask(void *parameter) {
     DynamicJsonDocument jsonDocument(200);
     jsonDocument["suhu"] = temp_str;
     jsonDocument["kelembaban"] = humi_str;
+    jsonDocument["mode"] = StatusModeH;
     jsonDocument["waktu"] = waktu;
     jsonDocument["fan"] = statusFan ? "ON" : "OFF";
     jsonDocument["pump"] = statusPump ? "ON" : "OFF";
@@ -128,16 +127,21 @@ void messageReceived(char *topic, byte *payload, unsigned int length) {
         Serial.println("Data Jadwal 3 Berhasil disimpan");
     }
   } else if (strcmp(topic, setPointMW) == 0) {
-    statusModeW = jsonDocument["mode"].as<String>();
-    Serial.println("Mode Kontrol :");
-    Serial.print(statusModeW);
+    Mode.statusModeW = jsonDocument["mode"].as<int>();
+    EEPROM.put(Address.addresMode, Mode.statusModeW);
+    EEPROM.commit();
+    // Serial.println("Data written to EEPROM: " + Mode.statusModeW);
+    // Serial.println("Mode Kontrol :");
+    // Serial.print(Mode.statusModeW);
   } else if (strcmp(topic, ScheduleMode) == 0) {
-    statusScheduleM = jsonDocument["Smode"].as<String>();
+    Mode.statusScheduleM = jsonDocument["Smode"].as<String>();
+    EEPROM.put(Address.addresSmode, Mode.statusScheduleM);
+    EEPROM.commit();
     lcd.clear();
     lcd.setCursor(0, 1);
     lcd.print("Schedule: ");
     lcd.setCursor(0, 2);
-    lcd.print(statusScheduleM);
+    lcd.print(Mode.statusScheduleM);
     delay(1000);
     lcd.clear();
     state = 0;
@@ -222,9 +226,9 @@ void setup() {
   // timer.setInterval(5000, sendData);
   // timer.setInterval(10000, history);
   PumpQueue = xQueueCreate(1, sizeof(int[2]));
-  xTaskCreate(pumpControlTask, "Pump Control Task", 2048, NULL, 1, &PumpTaskHandle);
-  xTaskCreate(sendDataTask, "Send Data Task", 10000, NULL, 1, NULL);
-  xTaskCreate(historyDataTask, "History Task", 10000, NULL, 1, NULL);
+  xTaskCreate(pumpControlTask, "Pump Control Task", 10000, NULL, 1, &PumpTaskHandle);
+  xTaskCreatePinnedToCore(sendDataTask, "Send Data Task", 10000, NULL, 1, NULL, 0);
+  xTaskCreatePinnedToCore(historyDataTask, "History Task", 10000, NULL, 1, NULL, 1);
   client.subscribe(subscribe);
   // client.subscribe(setPointW);
   // client.subscribe(setTime);
@@ -232,10 +236,10 @@ void setup() {
 
 void loop() {
   menuUtama();
-  mode(statusFan, statusPump, statusMode);
+  mode(statusFan, statusPump, statusMode, StatusModeH);
   scheduleMode();
   client.loop();
-  timer.run();
+  // timer.run();
 }
 
 void menuUtama() {
@@ -258,7 +262,7 @@ void menuUtama() {
       lcd.print("Humi:");
       lcd.print(dhtValues.kelembaban);
       lcd.print(" %");
-      lcd.setCursor(1, 3);
+      lcd.setCursor(2, 3);
       lcd.print(statusMode);
 
       if (digitalRead(bOK) == tekan) {
@@ -494,30 +498,46 @@ void menuUtama() {
   }
 }
 
-void mode(bool &statusFan, bool &statusPump, String &statusMode) {
+void mode(bool &statusFan, bool &statusPump, String &statusMode, String &StatusModeH) {
   dataSensor::DHT_Values dhtValues = dataSensor::getValues();
 
   int manualState = digitalRead(modeMan);
   int autoState = digitalRead(modeAuto);
 
-  if (manualState == LOW) {
+  Mode.statusModeW = EEPROM.read(Address.addresMode);
+  int dataMode = Mode.statusModeW;
+
+  // Serial.println(dataMode);
+
+  if (dataMode == 1) {
     leds[0] = CRGB(0, 0, 255);
     FastLED.show();
     statusMode = "Manual Mode Aktif";
-    if (digitalRead(buttonFan) == 0) {
-      digitalWrite(fan, !digitalRead(fan));
-      while (digitalRead(buttonFan) == 0)
-        ;
-    }
-    if (digitalRead(buttonPump) == 0) {
-      digitalWrite(pump, !digitalRead(pump));
-      while (digitalRead(buttonPump) == 0)
-        ;
-    }
-  } else if (autoState == LOW) {
+    StatusModeH = "Manual";
+      if (digitalRead(buttonFan) == 0) {
+          digitalWrite(fan, !digitalRead(fan));
+          while (digitalRead(buttonFan) == 0);
+          if (digitalRead(fan) == HIGH) {
+            statusFan = true;
+          } else {
+            statusFan = false;
+          }
+        }
+
+        if (digitalRead(buttonPump) == 0) {
+          digitalWrite(pump, !digitalRead(pump));
+          while (digitalRead(buttonPump) == 0);
+          if (digitalRead(pump) == HIGH) {
+            statusPump = true;
+          } else {
+            statusPump = false;
+          }
+        }
+  } else if (dataMode == 2) {
     leds[0] = CRGB::Purple;
     FastLED.show();
-    statusMode = "Auto Mode Aktif";
+    statusMode = "Auto Mode Aktif  ";
+    StatusModeH = "Auto";
     if (dhtValues.suhu >= setPoints.MinS) {
       digitalWrite(fan, HIGH);
       statusFan = true;
@@ -525,7 +545,6 @@ void mode(bool &statusFan, bool &statusPump, String &statusMode) {
       digitalWrite(fan, LOW);
       statusFan = false;
     }
-
     if (dhtValues.kelembaban <= setPoints.MinK) {
       digitalWrite(pump, HIGH);
       statusPump = true;
@@ -534,12 +553,11 @@ void mode(bool &statusFan, bool &statusPump, String &statusMode) {
       statusPump = false;
     }
 
-  } else {
-
+  } else if(dataMode == 3){
     leds[0] = CRGB(255, 128, 0);
     FastLED.show();
     statusMode = "Hybrid Mode Aktif";
-
+    StatusModeH = "Hybrid";
     buttonStateFan = digitalRead(buttonFan);
     buttonStatePump = digitalRead(buttonPump);
 
@@ -595,6 +613,23 @@ void mode(bool &statusFan, bool &statusPump, String &statusMode) {
 
 void scheduleMode() {
   DateTime now = rtc.now();
+  
+  byte dataBytes[Length_data];
+  int i = 0;
+  while (i < Length_data) {
+    dataBytes[i] = EEPROM.read(Address.addresSmode + i);
+    if (dataBytes[i] == '\0') {
+      break;
+    }
+    i++;
+  }
+
+  String dataScheduleMode = "";
+  
+  for (int j = 0; j < i; j++) {
+    dataScheduleMode += (char)dataBytes[j];
+  }
+    // Serial.println(dataScheduleMode);
   setTimer.Min = EEPROM.read(Address.addresMin);
   setTimer.Sec = EEPROM.read(Address.addresSec);
 
@@ -603,7 +638,7 @@ void scheduleMode() {
 
   static bool pumpStarted = false;
 
-  if (statusScheduleM == "modeSchedule1") {
+  if (dataScheduleMode == "modeSchedule1") {
     if ((now.hour() == setSchedule1.AH1 && now.minute() == setSchedule1.AM1) || (now.hour() == setSchedule1.AH2 && now.minute() == setSchedule1.AM2) || (now.hour() == setSchedule1.AH3 && now.minute() == setSchedule1.AM3)) {
       if (!pumpStarted) {
         pumpStarted = true;
@@ -613,7 +648,7 @@ void scheduleMode() {
     } else {
       pumpStarted = false;
     }
-  } else if (statusScheduleM == "modeSchedule2") {
+  } else if (dataScheduleMode == "modeSchedule2") {
     if ((now.hour() == setSchedule1.AH1 && now.minute() == setSchedule1.AM1) || (now.hour() == setSchedule1.AH2 && now.minute() == setSchedule1.AM2)) {
       if (!pumpStarted) {
         pumpStarted = true;

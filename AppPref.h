@@ -1,7 +1,6 @@
 #include <EEPROM.h>
 #include "TopicConfig.h"
 #include <LiquidCrystal_I2C.h>
-#include <NusabotSimpleTimer.h>
 #include <FastLED.h>
 // #include <SPI.h>
 #include <RTClib.h>
@@ -23,10 +22,12 @@
 #define tekan LOW
 #define tahan 50
 
+#define Length_data 13
+
 char temp_str[10];
 char humi_str[10];
 
-NusabotSimpleTimer timer;
+// NusabotSimpleTimer timer;
 
 struct SetPoints {
   uint8_t MinS;
@@ -64,11 +65,19 @@ struct address {
   static const int addresAM3 = 12;
   static const int addresMin = 9;
   static const int addresSec = 10;
+  static const int addresMode = 13;
+  static const int addresSmode = 14;
+};
+
+struct MoDe{
+   uint8_t statusModeW;
+  String statusScheduleM;
 };
 
 char state = 0;
 bool statusFan, statusPump;
-String statusMode, statusModeW, statusScheduleM;
+String statusMode, StatusModeH; 
+// statusModeW, statusScheduleM;
 
 int buttonStateFan = 0;     
 bool manualFanControl = false;
@@ -81,6 +90,7 @@ address Address;
 SetPoints setPoints;
 Schedule1 setSchedule1;
 timers setTimer;
+MoDe Mode;
 
 LiquidCrystal_I2C lcd(0x27, 20, 4);
 CRGB leds[NUM_LEDS];
