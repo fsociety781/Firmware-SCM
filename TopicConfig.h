@@ -4,9 +4,9 @@
 WiFiClient espClient;
 PubSubClient client(espClient);
 
-const char *mqtt_broker = "broker.emqx.io";
-const char *mqtt_username = "";
-const char *mqtt_password = "";
+const char *mqtt_broker = "157.245.192.51";
+const char *mqtt_username = "rehan";
+const char *mqtt_password = "rehanganz123";
 const int mqtt_port = 1883;
 
 const char *subscribe = "raihan/#";

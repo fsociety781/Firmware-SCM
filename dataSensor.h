@@ -16,13 +16,14 @@ class dataSensor {
     static void setup(void)
     {
       dht.begin();
-    };
-
+    }
     static DHT_Values getValues(void)
     {
       DHT_Values data;
-      data.suhu =  dht.readTemperature();
-      data.kelembaban = dht.readHumidity();
+      float tempK = dht.readTemperature();
+      float humK = dht.readHumidity();
+      data.suhu =  tempK - 1.0;
+      data.kelembaban = humK + 11.9;
       return data;
     };
 };

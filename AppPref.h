@@ -7,13 +7,13 @@
 #include "dataSensor.h"
 #include <ArduinoJson.h>
 
-#define bUP 14
-#define bOK 12
+#define bUP 12
+#define bOK 14
 #define bDN 13
 #define LED_PIN     4
-#define NUM_LEDS    8
-#define modeMan 16
-#define modeAuto 17
+#define NUM_LEDS    1
+// #define modeMan 16
+// #define modeAuto 17
 #define buttonFan 27
 #define buttonPump 26
 #define fan 25
@@ -26,8 +26,6 @@
 
 char temp_str[10];
 char humi_str[10];
-
-// NusabotSimpleTimer timer;
 
 struct SetPoints {
   uint8_t MinS;
@@ -85,6 +83,8 @@ bool previousButtonStateFan = HIGH;
 int buttonStatePump = 0;     
 bool manualPumpControl = false;
 bool previousButtonStatePump = HIGH;
+bool modePaused = false;
+bool pumpRunning = false;
 
 address Address;
 SetPoints setPoints;

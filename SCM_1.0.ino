@@ -1,12 +1,12 @@
 #include "AppPref.h"
 
-const char ssid[] = "ganz2";
-const char pass[] = "Password";
+const char ssid[] = "Ani";
+const char pass[] = "password_12";
 
 RTC_DS3231 rtc;
 DateTime lastDateTime;
 String waktu;
-char days[7][12] = { "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday" };
+char days[7][12] = { "Sunday","Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
 
 TaskHandle_t PumpTaskHandle;
 QueueHandle_t PumpQueue;
@@ -20,8 +20,10 @@ void pumpControlTask(void *parameter) {
       int Sec = duration[1];
       TickType_t lastWakeTime = xTaskGetTickCount();
 
+      modePaused = true;
+      pumpRunning = true;
       while (Min > 0 || Sec > 0) {
-        digitalWrite(pump, HIGH);
+        digitalWrite(pump, LOW);
         vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(1000)); 
 
         Sec--;
@@ -35,7 +37,9 @@ void pumpControlTask(void *parameter) {
         Serial.print("Seconds: ");
         Serial.println(Sec);
       }
-      digitalWrite(pump, LOW);
+      digitalWrite(pump, HIGH);
+      pumpRunning = false;
+      modePaused = false;
       Serial.println("Pompa Mati");
     }
   }
@@ -66,24 +70,27 @@ void sendDataTask(void *parameter) {
 void historyDataTask(void *parameter) {
   for (;;) {
     dataSensor::DHT_Values dhtValues = dataSensor::getValues();
-    DateTime now = rtc.now();
-    char time[50];
-    sprintf(time, "%d/%d/%d %02d:%02d:%02d",now.year(), now.month(), now.day(), now.hour(), now.minute(), now.second());
-    waktu = time;
+      DateTime now = rtc.now();
+      char time[50];
+      sprintf(time, "%d/%d/%d %02d:%02d:%02d",now.year(), now.month(), now.day(), now.hour(), now.minute(), now.second());
+      waktu = time;
 
-    dtostrf(dhtValues.suhu, 6, 2, temp_str);
-    dtostrf(dhtValues.kelembaban, 6, 2, humi_str);
-    DynamicJsonDocument jsonDocument(200);
-    jsonDocument["suhu"] = temp_str;
-    jsonDocument["kelembaban"] = humi_str;
-    jsonDocument["mode"] = StatusModeH;
-    jsonDocument["waktu"] = waktu;
-    jsonDocument["fan"] = statusFan ? "ON" : "OFF";
-    jsonDocument["pump"] = statusPump ? "ON" : "OFF";
-    String output;
-    serializeJson(jsonDocument, output);
-    client.publish(History, output.c_str());
-    
+      // Tambahkan kondisi untuk memeriksa nilai suhu dan kelembaban
+    if (dhtValues.suhu != 0 && dhtValues.kelembaban != 0) {
+      dtostrf(dhtValues.suhu, 6, 2, temp_str);
+      dtostrf(dhtValues.kelembaban, 6, 2, humi_str);
+      DynamicJsonDocument jsonDocument(200);
+      jsonDocument["suhu"] = temp_str;
+      jsonDocument["kelembaban"] = humi_str;
+      jsonDocument["mode"] = StatusModeH;
+      jsonDocument["waktu"] = waktu;
+      jsonDocument["fan"] = statusFan ? "ON" : "OFF";
+      jsonDocument["pump"] = statusPump ? "ON" : "OFF";
+      String output;
+      serializeJson(jsonDocument, output);
+      client.publish(History, output.c_str());
+    }
+
     vTaskDelay(pdMS_TO_TICKS(10000));
   }
 }
@@ -155,17 +162,40 @@ void messageReceived(char *topic, byte *payload, unsigned int length) {
     Serial.println("Berhasil Setting Timer");
   } else if (strcmp(topic, ControllFan) == 0) {
     int Fan = jsonDocument["fan"].as<int>();
-    if (Fan == 1) {
-      digitalWrite(fan, HIGH);
-    } else {
+    if (Fan == 0) {
       digitalWrite(fan, LOW);
+      statusFan = true;
+    } else {
+      digitalWrite(fan, HIGH);
+      statusFan = false;
     }
   } else if (strcmp(topic, ControllPump) == 0) {
     int Pump = jsonDocument["pump"].as<int>();
-    if (Pump == 1) {
-      digitalWrite(pump, HIGH);
-    } else {
+    if (Pump == 0) {
       digitalWrite(pump, LOW);
+      statusPump = true;
+    } else {
+      digitalWrite(pump, HIGH);
+      statusPump = false;
+    }
+  }
+}
+
+void reconnectMQTT() {
+  Serial.println("Menghubungkan ke Broker");
+  client.setServer(mqtt_broker, mqtt_port);
+  client.setCallback(messageReceived);
+  while (!client.connected()) {
+    String client_id = "SCM-Control-Box";
+    client_id += String(WiFi.macAddress());
+    Serial.printf("The client %s connects to the public MQTT broker\n", client_id.c_str());
+    if (client.connect(client_id.c_str(), mqtt_username, mqtt_password)) {
+      Serial.println("Terhubung ke MQTT Broker");
+        client.subscribe(subscribe);
+    } else {
+      Serial.print("failed with state ");
+      Serial.println(client.state());
+      delay(2000);
     }
   }
 }
@@ -179,14 +209,14 @@ void setup() {
   pinMode(bUP, INPUT_PULLUP);
   pinMode(bOK, INPUT_PULLUP);
   pinMode(bDN, INPUT_PULLUP);
-  pinMode(modeMan, INPUT_PULLUP);
-  pinMode(modeAuto, INPUT_PULLUP);
+  // pinMode(modeMan, INPUT_PULLUP);
+  // pinMode(modeAuto, INPUT_PULLUP);
   pinMode(buttonFan, INPUT_PULLUP);
   pinMode(buttonPump, INPUT_PULLUP);
   pinMode(fan, OUTPUT);
   pinMode(pump, OUTPUT);
-  digitalWrite(fan, LOW);
-  digitalWrite(pump, LOW);
+  digitalWrite(fan, HIGH);
+  digitalWrite(pump, HIGH);
   dataSensor::setup();
 
   WiFi.begin(ssid, pass);
@@ -235,11 +265,17 @@ void setup() {
 }
 
 void loop() {
+  if (WiFi.status() != WL_CONNECTED) {
+        Serial.println("Trying to reconnect to WiFi...");
+        WiFi.begin(ssid, pass);
+      }
+  if (!client.connected()) {
+    reconnectMQTT();
+  }
+  client.loop();
   menuUtama();
   mode(statusFan, statusPump, statusMode, StatusModeH);
-  scheduleMode();
-  client.loop();
-  // timer.run();
+  scheduleMode(pumpStarted);
 }
 
 void menuUtama() {
@@ -255,11 +291,11 @@ void menuUtama() {
       lcd.print("Time:");
       lcd.print(waktu);
       lcd.setCursor(0, 1);
-      lcd.print("Temp:");
+      lcd.print("Temp: ");
       lcd.print(dhtValues.suhu);
       lcd.print(" C");
       lcd.setCursor(0, 2);
-      lcd.print("Humi:");
+      lcd.print("Humi: ");
       lcd.print(dhtValues.kelembaban);
       lcd.print(" %");
       lcd.setCursor(2, 3);
@@ -499,65 +535,70 @@ void menuUtama() {
 }
 
 void mode(bool &statusFan, bool &statusPump, String &statusMode, String &StatusModeH) {
+  if (modePaused) {
+    return;
+  }
+
   dataSensor::DHT_Values dhtValues = dataSensor::getValues();
-
-  int manualState = digitalRead(modeMan);
-  int autoState = digitalRead(modeAuto);
-
   Mode.statusModeW = EEPROM.read(Address.addresMode);
+  int suhuM = EEPROM.read(Address.addresMinS);
+  int suhuR = EEPROM.read(Address.addresMidS);
+  int kelM = EEPROM.read(Address.addresMinK);
+  int kelR = EEPROM.read(Address.addresMidK);
+ 
   int dataMode = Mode.statusModeW;
-
-  // Serial.println(dataMode);
-
   if (dataMode == 1) {
     leds[0] = CRGB(0, 0, 255);
     FastLED.show();
     statusMode = "Manual Mode Aktif";
     StatusModeH = "Manual";
-      if (digitalRead(buttonFan) == 0) {
-          digitalWrite(fan, !digitalRead(fan));
-          while (digitalRead(buttonFan) == 0);
-          if (digitalRead(fan) == HIGH) {
-            statusFan = true;
-          } else {
-            statusFan = false;
-          }
-        }
-
-        if (digitalRead(buttonPump) == 0) {
-          digitalWrite(pump, !digitalRead(pump));
-          while (digitalRead(buttonPump) == 0);
-          if (digitalRead(pump) == HIGH) {
-            statusPump = true;
-          } else {
-            statusPump = false;
-          }
-        }
+        
+    if (digitalRead(buttonFan) == 0) {
+      digitalWrite(fan, !digitalRead(fan));
+      while (digitalRead(buttonFan) == 0);
+      if (digitalRead(fan) == LOW) {
+        statusFan = true;
+      } else {
+        statusFan = false;
+      }
+    }
+      
+    if (digitalRead(buttonPump) == 0) {
+      digitalWrite(pump, !digitalRead(pump));
+      while (digitalRead(buttonPump) == 0);
+      if (digitalRead(pump) == LOW) {
+        statusPump = true;
+      } else {
+        statusPump = false;
+      }
+    }
   } else if (dataMode == 2) {
     leds[0] = CRGB::Purple;
     FastLED.show();
     statusMode = "Auto Mode Aktif  ";
     StatusModeH = "Auto";
-    if (dhtValues.suhu >= setPoints.MinS) {
-      digitalWrite(fan, HIGH);
-      statusFan = true;
-    } else if (dhtValues.suhu <= setPoints.MidS) {
+    
+    if (dhtValues.suhu >= suhuM) {
       digitalWrite(fan, LOW);
+      statusFan = true;
+    } else if (dhtValues.suhu <= suhuR) {
+      digitalWrite(fan, HIGH);
       statusFan = false;
     }
-    if (dhtValues.kelembaban <= setPoints.MinK) {
-      digitalWrite(pump, HIGH);
-      statusPump = true;
-    } else if (dhtValues.kelembaban >= setPoints.MidK) {
+
+    if (dhtValues.kelembaban <= kelM) {
       digitalWrite(pump, LOW);
+      statusPump = true;
+    } else if (dhtValues.kelembaban >= kelR) {
+      digitalWrite(pump, HIGH);
       statusPump = false;
     }
-
-  } else if(dataMode == 3){
+  } else if (dataMode == 3) {
     leds[0] = CRGB(255, 128, 0);
     FastLED.show();
     statusMode = "Hybrid Mode Aktif";
     StatusModeH = "Hybrid";
+      
     buttonStateFan = digitalRead(buttonFan);
     buttonStatePump = digitalRead(buttonPump);
 
@@ -569,18 +610,18 @@ void mode(bool &statusFan, bool &statusPump, String &statusMode, String &StatusM
       }
     }
     previousButtonStateFan = buttonStateFan;
+    
     if (manualFanControl) {
       if (digitalRead(buttonFan) == 0) {
         digitalWrite(fan, !digitalRead(fan));
-        while (digitalRead(buttonFan) == 0)
-          ;
+        while (digitalRead(buttonFan) == 0);
       }
     } else {
-      if (dhtValues.suhu >= setPoints.MinS) {
-        digitalWrite(fan, HIGH);
-        statusFan = true;
-      } else if (dhtValues.suhu <= setPoints.MidS) {
+      if (dhtValues.suhu >= suhuM) {
         digitalWrite(fan, LOW);
+        statusFan = true;
+      } else if (dhtValues.suhu <= suhuR) {
+        digitalWrite(fan, HIGH);
         statusFan = false;
       }
     }
@@ -596,15 +637,14 @@ void mode(bool &statusFan, bool &statusPump, String &statusMode, String &StatusM
     if (manualPumpControl) {
       if (digitalRead(buttonPump) == 0) {
         digitalWrite(pump, !digitalRead(pump));
-        while (digitalRead(buttonPump) == 0)
-          ;
+        while (digitalRead(buttonPump) == 0);
       }
     } else {
-      if (dhtValues.kelembaban <= setPoints.MinK) {
-        digitalWrite(pump, HIGH);
-        statusPump = true;
-      } else if (dhtValues.kelembaban >= setPoints.MidK) {
+      if (dhtValues.kelembaban <= kelM) {
         digitalWrite(pump, LOW);
+        statusPump = true;
+      } else if (dhtValues.kelembaban >= kelR) {
+        digitalWrite(pump, HIGH);
         statusPump = false;
       }
     }
@@ -629,9 +669,16 @@ void scheduleMode() {
   for (int j = 0; j < i; j++) {
     dataScheduleMode += (char)dataBytes[j];
   }
-    // Serial.println(dataScheduleMode);
+
   setTimer.Min = EEPROM.read(Address.addresMin);
   setTimer.Sec = EEPROM.read(Address.addresSec);
+
+  int Jam1 = EEPROM.read(Address.addresAH1);
+  int Min1 = EEPROM.read(Address.addresAM1);
+  int Jam2 = EEPROM.read(Address.addresAH2);
+  int Min2 = EEPROM.read(Address.addresAM2);
+  int Jam3 = EEPROM.read(Address.addresAH3);
+  int Min3 = EEPROM.read(Address.addresAM3);
 
   int Min = setTimer.Min;
   int Sec = setTimer.Sec;
