@@ -1,21 +1,23 @@
 #include "AppPref.h"
 
-const char ssid[] = "Ani";
-const char pass[] = "password_12";
+const char ssid[] = "ganz2";
+const char pass[] = "Password";
 
 RTC_DS3231 rtc;
 DateTime lastDateTime;
-String waktu;
-char days[7][12] = { "Sunday","Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
+char days[7][12] = { "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday" };
 
 TaskHandle_t PumpTaskHandle;
 QueueHandle_t PumpQueue;
+SemaphoreHandle_t mySemaphore;
 
 void pumpControlTask(void *parameter) {
+  Serial.print("running on core: ");
+  Serial.println(xTaskGetAffinity(NULL));
   int duration[2];
 
   while (true) {
-    if (xQueueReceive(PumpQueue, &duration, portMAX_DELAY)) {
+    if (xQueueReceive(PumpQueue, &duration, pdMS_TO_TICKS(1000)) == pdTRUE) {
       int Min = duration[0];
       int Sec = duration[1];
       TickType_t lastWakeTime = xTaskGetTickCount();
@@ -24,18 +26,13 @@ void pumpControlTask(void *parameter) {
       pumpRunning = true;
       while (Min > 0 || Sec > 0) {
         digitalWrite(pump, LOW);
-        vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(1000)); 
+        vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(1000));
 
         Sec--;
         if (Sec < 0) {
           Sec = 59;
           Min--;
         }
-
-        Serial.print("Minutes: ");
-        Serial.println(Min);
-        Serial.print("Seconds: ");
-        Serial.println(Sec);
       }
       digitalWrite(pump, HIGH);
       pumpRunning = false;
@@ -45,53 +42,120 @@ void pumpControlTask(void *parameter) {
   }
 }
 
-void sendDataTask(void *parameter) {
-  for (;;) {
-    dataSensor::DHT_Values dhtValues = dataSensor::getValues();
+// void sendDataTask(void *parameter) {
+//   for (;;) {
+//     dataDHT::DHT_Values dhtValues = dataDHT::getValues();
 
+//     DateTime now = rtc.now();
+//     char waktu[50];
+//     sprintf(waktu, "/%04d/%02d/%02d %02d:%02d:%02d", now.year(), now.month(), now.day(), now.hour(), now.minute(), now.second());
+
+//     Serial.println("Attempting to take semaphore in sendDataTask");
+//     if (xSemaphoreTake(mySemaphore, pdMS_TO_TICKS(1000)) == pdTRUE) {
+//     Serial.println("Semaphore taken by sendDataTask");
+//     dtostrf(dhtValues.suhu, 6, 2, temp_str);
+//     dtostrf(dhtValues.kelembaban, 6, 2, humi_str);
+//     StaticJsonDocument<200> jsonDocument;
+//     jsonDocument["suhu"] = temp_str;
+//     jsonDocument["kelembaban"] = humi_str;
+//     jsonDocument["waktu"] = waktu;
+//     char jsonBuffer[200];
+//     serializeJson(jsonDocument, jsonBuffer);
+//     client.publish(Sensor_Topic, jsonBuffer);
+//      Serial.println("Data sent by sendDataTask");
+
+//       vTaskDelay(pdMS_TO_TICKS(1000));
+
+//       xSemaphoreGive(mySemaphore);
+//       Serial.println("Semaphore given by sendDataTask");
+//     } else {
+//       Serial.println("Send data timeout");
+//     }
+
+//     vTaskDelay(pdMS_TO_TICKS(5000));
+//   } 
+// }
+
+// void historyDataTask(void *parameter) {
+//   for (;;) {
+//     dataDHT::DHT_Values dhtValues = dataDHT::getValues();
+//     DateTime now = rtc.now();
+//     char waktu[50];
+//     sprintf(waktu, "/%04d/%02d/%02d %02d:%02d:%02d", now.year(), now.month(), now.day(), now.hour(), now.minute(), now.second());
+
+//     if (xSemaphoreTake(mySemaphore, pdMS_TO_TICKS(1000)) == pdTRUE) {
+//       if (dhtValues.suhu != 0 && dhtValues.kelembaban != 0) {
+//         dtostrf(dhtValues.suhu, 6, 2, temp_str);
+//         dtostrf(dhtValues.kelembaban, 6, 2, humi_str);
+//         DynamicJsonDocument jsonDocument(200);
+//         jsonDocument["suhu"] = temp_str;
+//         jsonDocument["kelembaban"] = humi_str;
+//         jsonDocument["mode"] = StatusModeH;
+//         jsonDocument["waktu"] = waktu;
+//         jsonDocument["fan"] = statusFan ? "ON" : "OFF";
+//         jsonDocument["pump"] = statusPump ? "ON" : "OFF";
+//         String output;
+//         serializeJson(jsonDocument, output);
+//         client.publish(History, output.c_str());
+//       }
+
+//       vTaskDelay(pdMS_TO_TICKS(1000));
+
+//       xSemaphoreGive(mySemaphore);
+//     } else {
+//       Serial.println("History data timeout");
+//     }
+
+//     vTaskDelay(pdMS_TO_TICKS(10000));
+//   }
+// }
+
+void dataTask(void *parameter) {
+  for (;;) {
+    dataDHT::DHT_Values dhtValues = dataDHT::getValues();
     DateTime now = rtc.now();
-    char time[50];
-    sprintf(time, "%d/%d/%d %02d:%02d:%02d", now.year(), now.month(), now.day(), now.hour(), now.minute(), now.second());
-    waktu = time;
+    char waktu[50];
+    sprintf(waktu, "/%04d/%02d/%02d %02d:%02d:%02d", now.year(), now.month(), now.day(), now.hour(), now.minute(), now.second());
 
-    dtostrf(dhtValues.suhu, 6, 2, temp_str);
-    dtostrf(dhtValues.kelembaban, 6, 2, humi_str);
-    StaticJsonDocument<200> jsonDocument;
-    jsonDocument["suhu"] = temp_str;
-    jsonDocument["kelembaban"] = humi_str;
-    jsonDocument["waktu"] = waktu;
-    char jsonBuffer[200];
-    serializeJson(jsonDocument, jsonBuffer);
-    client.publish(Sensor_Topic, jsonBuffer);
-    vTaskDelay(pdMS_TO_TICKS(5000));
-  }
-}
+    if (xSemaphoreTake(mySemaphore, pdMS_TO_TICKS(1000)) == pdTRUE) {
+      if (dhtValues.suhu != 0 && dhtValues.kelembaban != 0) {
+        char temp_str[10];
+        char humi_str[10];
+        dtostrf(dhtValues.suhu, 6, 2, temp_str);
+        dtostrf(dhtValues.kelembaban, 6, 2, humi_str);
 
-void historyDataTask(void *parameter) {
-  for (;;) {
-    dataSensor::DHT_Values dhtValues = dataSensor::getValues();
-      DateTime now = rtc.now();
-      char time[50];
-      sprintf(time, "%d/%d/%d %02d:%02d:%02d",now.year(), now.month(), now.day(), now.hour(), now.minute(), now.second());
-      waktu = time;
+        // Send data
+        StaticJsonDocument<200> sendDataJson;
+        sendDataJson["suhu"] = temp_str;
+        sendDataJson["kelembaban"] = humi_str;
+        sendDataJson["waktu"] = waktu;
+        char sendDataBuffer[200];
+        serializeJson(sendDataJson, sendDataBuffer);
+        client.publish(Sensor_Topic, sendDataBuffer);
 
-      // Tambahkan kondisi untuk memeriksa nilai suhu dan kelembaban
-    if (dhtValues.suhu != 0 && dhtValues.kelembaban != 0) {
-      dtostrf(dhtValues.suhu, 6, 2, temp_str);
-      dtostrf(dhtValues.kelembaban, 6, 2, humi_str);
-      DynamicJsonDocument jsonDocument(200);
-      jsonDocument["suhu"] = temp_str;
-      jsonDocument["kelembaban"] = humi_str;
-      jsonDocument["mode"] = StatusModeH;
-      jsonDocument["waktu"] = waktu;
-      jsonDocument["fan"] = statusFan ? "ON" : "OFF";
-      jsonDocument["pump"] = statusPump ? "ON" : "OFF";
-      String output;
-      serializeJson(jsonDocument, output);
-      client.publish(History, output.c_str());
+        // History data
+        DynamicJsonDocument historyDataJson(200);
+        historyDataJson["suhu"] = temp_str;
+        historyDataJson["kelembaban"] = humi_str;
+        historyDataJson["mode"] = StatusModeH;
+        historyDataJson["waktu"] = waktu;
+        historyDataJson["fan"] = statusFan ? "ON" : "OFF";
+        historyDataJson["pump"] = statusPump ? "ON" : "OFF";
+        String historyOutput;
+        serializeJson(historyDataJson, historyOutput);
+        client.publish(History, historyOutput.c_str());
+
+        vTaskDelay(pdMS_TO_TICKS(1000));
+
+        xSemaphoreGive(mySemaphore);
+      } else {
+        Serial.println("Invalid sensor data");
+      }
+    } else {
+      Serial.println("Data send timeout");
     }
 
-    vTaskDelay(pdMS_TO_TICKS(10000));
+    vTaskDelay(pdMS_TO_TICKS(5000)); // Delay 5 seconds
   }
 }
 
@@ -111,27 +175,27 @@ void messageReceived(char *topic, byte *payload, unsigned int length) {
     EEPROM.commit();
     Serial.println("Data Berhasil di simpan");
   } else if (strcmp(topic, setPointSW) == 0) {
-   if (jsonDocument.containsKey("jam1") && jsonDocument.containsKey("menit1")) {
-        setSchedule1.AH1 = jsonDocument["jam1"].as<int>();
-        setSchedule1.AM1 = jsonDocument["menit1"].as<int>();
-        EEPROM.put(Address.addresAH1, setSchedule1.AH1);
-        EEPROM.put(Address.addresAM1, setSchedule1.AM1);
-        EEPROM.commit();
-        Serial.println("Data Jadwal 1 Berhasil disimpan");
+    if (jsonDocument.containsKey("jam1") && jsonDocument.containsKey("menit1")) {
+      setSchedule1.AH1 = jsonDocument["jam1"].as<int>();
+      setSchedule1.AM1 = jsonDocument["menit1"].as<int>();
+      EEPROM.put(Address.addresAH1, setSchedule1.AH1);
+      EEPROM.put(Address.addresAM1, setSchedule1.AM1);
+      EEPROM.commit();
+      Serial.println("Data Jadwal 1 Berhasil disimpan");
     } else if (jsonDocument.containsKey("jam2") && jsonDocument.containsKey("menit2")) {
-        setSchedule1.AH2 = jsonDocument["jam2"].as<int>();
-        setSchedule1.AM2 = jsonDocument["menit2"].as<int>();
-        EEPROM.put(Address.addresAH2, setSchedule1.AH2);
-        EEPROM.put(Address.addresAM2, setSchedule1.AM2);
-        EEPROM.commit();
-        Serial.println("Data Jadwal 2 Berhasil disimpan");
+      setSchedule1.AH2 = jsonDocument["jam2"].as<int>();
+      setSchedule1.AM2 = jsonDocument["menit2"].as<int>();
+      EEPROM.put(Address.addresAH2, setSchedule1.AH2);
+      EEPROM.put(Address.addresAM2, setSchedule1.AM2);
+      EEPROM.commit();
+      Serial.println("Data Jadwal 2 Berhasil disimpan");
     } else if (jsonDocument.containsKey("jam3") && jsonDocument.containsKey("menit3")) {
-        setSchedule1.AH3 = jsonDocument["jam3"].as<int>();
-        setSchedule1.AM3 = jsonDocument["menit3"].as<int>();
-        EEPROM.put(Address.addresAH3, setSchedule1.AH3);
-        EEPROM.put(Address.addresAM3, setSchedule1.AM3);
-        EEPROM.commit();
-        Serial.println("Data Jadwal 3 Berhasil disimpan");
+      setSchedule1.AH3 = jsonDocument["jam3"].as<int>();
+      setSchedule1.AM3 = jsonDocument["menit3"].as<int>();
+      EEPROM.put(Address.addresAH3, setSchedule1.AH3);
+      EEPROM.put(Address.addresAM3, setSchedule1.AM3);
+      EEPROM.commit();
+      Serial.println("Data Jadwal 3 Berhasil disimpan");
     }
   } else if (strcmp(topic, setPointMW) == 0) {
     Mode.statusModeW = jsonDocument["mode"].as<int>();
@@ -161,41 +225,60 @@ void messageReceived(char *topic, byte *payload, unsigned int length) {
     EEPROM.commit();
     Serial.println("Berhasil Setting Timer");
   } else if (strcmp(topic, ControllFan) == 0) {
-    int Fan = jsonDocument["fan"].as<int>();
+    Fan = jsonDocument["fan"].as<int>();
     if (Fan == 0) {
-      digitalWrite(fan, LOW);
-      statusFan = true;
-    } else {
       digitalWrite(fan, HIGH);
       statusFan = false;
+    } else {
+      digitalWrite(fan, LOW);
+      statusFan = true;
     }
   } else if (strcmp(topic, ControllPump) == 0) {
-    int Pump = jsonDocument["pump"].as<int>();
+    Pump = jsonDocument["pump"].as<int>();
     if (Pump == 0) {
-      digitalWrite(pump, LOW);
-      statusPump = true;
-    } else {
       digitalWrite(pump, HIGH);
       statusPump = false;
+    } else {
+      digitalWrite(pump, LOW);
+      statusPump = true;
     }
   }
 }
 
-void reconnectMQTT() {
-  Serial.println("Menghubungkan ke Broker");
-  client.setServer(mqtt_broker, mqtt_port);
-  client.setCallback(messageReceived);
+void connect() {
+  if (WiFi.status() != WL_CONNECTED) {
+    lcd.clear();
+    lcd.setCursor(6, 1);
+    lcd.print("Device");
+    lcd.setCursor(3, 2);
+    lcd.print("Disconnected");
+    while (WiFi.status() != WL_CONNECTED) {
+      WiFi.begin(ssid, pass);
+      delay(500);
+    }
+    lcd.clear();
+    lcd.setCursor(6, 1);
+    lcd.print("Device");
+    lcd.setCursor(4, 2);
+    lcd.print("Connected");
+    isWiFiConnected = true;
+    connectionStatusMillis = millis();
+  }
+
   while (!client.connected()) {
-    String client_id = "SCM-Control-Box";
+    String client_id = "SCM";
     client_id += String(WiFi.macAddress());
     Serial.printf("The client %s connects to the public MQTT broker\n", client_id.c_str());
     if (client.connect(client_id.c_str(), mqtt_username, mqtt_password)) {
       Serial.println("Terhubung ke MQTT Broker");
-        client.subscribe(subscribe);
-    } else {
-      Serial.print("failed with state ");
-      Serial.println(client.state());
-      delay(2000);
+      client.subscribe(subscribe);
+      lcd.clear();
+      lcd.setCursor(6, 1);
+      lcd.print("Device");
+      lcd.setCursor(4, 2);
+      lcd.print("Connected");
+      lcd.clear();
+      connectionStatusMillis = millis();
     }
   }
 }
@@ -217,15 +300,13 @@ void setup() {
   pinMode(pump, OUTPUT);
   digitalWrite(fan, HIGH);
   digitalWrite(pump, HIGH);
-  dataSensor::setup();
+  dataDHT::setup();
 
   WiFi.begin(ssid, pass);
-  Serial.print("Menghubungkan ke WiFi");
-  while (WiFi.status() != WL_CONNECTED) {
-    Serial.print(".");
-    delay(500);
-  }
-  Serial.println("Berhasil terhubung ke WiFi!");
+  client.setServer(mqtt_broker, mqtt_port);
+  client.setCallback(messageReceived);
+
+  connect();
 
   if (!rtc.begin()) {
     Serial.println("Couldn't find RTC");
@@ -236,29 +317,23 @@ void setup() {
     // rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
   }
   // rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
-  Serial.println("RTC OK");
 
-  Serial.println("Menghubungkan ke Broker");
-  client.setServer(mqtt_broker, mqtt_port);
-  client.setCallback(messageReceived);
-  while (!client.connected()) {
-    String client_id = "ijoidwawdnai";
-    client_id += String(WiFi.macAddress());
-    Serial.printf("The client %s connects to the public MQTT broker\n", client_id.c_str());
-    if (client.connect(client_id.c_str(), mqtt_username, mqtt_password)) {
-      Serial.println("Public EMQX MQTT broker connected");
-    } else {
-      Serial.print("failed with state ");
-      Serial.println(client.state());
-      delay(2000);
-    }
-  }
   // timer.setInterval(5000, sendData);
   // timer.setInterval(10000, history);
-  PumpQueue = xQueueCreate(1, sizeof(int[2]));
-  xTaskCreate(pumpControlTask, "Pump Control Task", 10000, NULL, 1, &PumpTaskHandle);
-  xTaskCreatePinnedToCore(sendDataTask, "Send Data Task", 10000, NULL, 1, NULL, 0);
-  xTaskCreatePinnedToCore(historyDataTask, "History Task", 10000, NULL, 1, NULL, 1);
+  PumpQueue = xQueueCreate(10, sizeof(int[2]));
+  mySemaphore = xSemaphoreCreateMutex();
+  if (PumpQueue == NULL || mySemaphore == NULL) {
+    Serial.println("Failed to create queue or semaphore");
+    while (1)
+      ;
+  }
+
+  // Create tasks
+     xTaskCreatePinnedToCore(pumpControlTask, "Pump Control Task", 10000, NULL, 1, &PumpTaskHandle, 1);  // Pin to core 1
+  // xTaskCreatePinnedToCore(sendDataTask, "Send Data Task", 10000, NULL, 1, NULL, 0);                   // Pin to core 0
+  // xTaskCreatePinnedToCore(historyDataTask, "History Task", 10000, NULL, 2, NULL, 1);                  // Pin to core 1
+     xTaskCreatePinnedToCore(dataTask,"Data Task", 10000, NULL, 1 , NULL, 0);
+
   client.subscribe(subscribe);
   // client.subscribe(setPointW);
   // client.subscribe(setTime);
@@ -266,30 +341,33 @@ void setup() {
 
 void loop() {
   if (WiFi.status() != WL_CONNECTED) {
-        Serial.println("Trying to reconnect to WiFi...");
-        WiFi.begin(ssid, pass);
-      }
-  if (!client.connected()) {
-    reconnectMQTT();
+    isWiFiConnected = false;
+    connect();
   }
   client.loop();
-  menuUtama();
-  mode(statusFan, statusPump, statusMode, StatusModeH);
-  scheduleMode(pumpStarted);
+  unsigned long currentMillis = millis();
+  if (isWiFiConnected && (currentMillis - connectionStatusMillis >= 2000)) {
+    menuUtama();
+    mode(statusFan, statusPump, statusMode, StatusModeH);
+    scheduleMode();
+  }
+
+  // Serial.print("Free heap: ");
+  // Serial.println(esp_get_free_heap_size());
 }
 
 void menuUtama() {
-  dataSensor::DHT_Values dhtValues = dataSensor::getValues();
+  dataDHT::DHT_Values dhtValues = dataDHT::getValues();
   DateTime now = rtc.now();
+  String times;
   char time[50];
-  sprintf(time, "%02d:%02d %d/%d/%d", now.hour(), now.minute(), now.day(), now.month(), now.year());
-  waktu = time;
-
+  sprintf(time, "%02d:%02d %02d/%02d/%04d", now.hour(), now.minute(), now.day(), now.month(), now.year());
+  times = time;
   switch (state) {
     case 0:
       lcd.setCursor(0, 0);
       lcd.print("Time:");
-      lcd.print(waktu);
+      lcd.print(times);
       lcd.setCursor(0, 1);
       lcd.print("Temp: ");
       lcd.print(dhtValues.suhu);
@@ -539,33 +617,35 @@ void mode(bool &statusFan, bool &statusPump, String &statusMode, String &StatusM
     return;
   }
 
-  dataSensor::DHT_Values dhtValues = dataSensor::getValues();
+  dataDHT::DHT_Values dhtValues = dataDHT::getValues();
   Mode.statusModeW = EEPROM.read(Address.addresMode);
   int suhuM = EEPROM.read(Address.addresMinS);
   int suhuR = EEPROM.read(Address.addresMidS);
   int kelM = EEPROM.read(Address.addresMinK);
   int kelR = EEPROM.read(Address.addresMidK);
- 
+
   int dataMode = Mode.statusModeW;
   if (dataMode == 1) {
     leds[0] = CRGB(0, 0, 255);
     FastLED.show();
     statusMode = "Manual Mode Aktif";
     StatusModeH = "Manual";
-        
+
     if (digitalRead(buttonFan) == 0) {
       digitalWrite(fan, !digitalRead(fan));
-      while (digitalRead(buttonFan) == 0);
+      while (digitalRead(buttonFan) == 0)
+        ;
       if (digitalRead(fan) == LOW) {
         statusFan = true;
       } else {
         statusFan = false;
       }
     }
-      
+
     if (digitalRead(buttonPump) == 0) {
       digitalWrite(pump, !digitalRead(pump));
-      while (digitalRead(buttonPump) == 0);
+      while (digitalRead(buttonPump) == 0)
+        ;
       if (digitalRead(pump) == LOW) {
         statusPump = true;
       } else {
@@ -577,11 +657,14 @@ void mode(bool &statusFan, bool &statusPump, String &statusMode, String &StatusM
     FastLED.show();
     statusMode = "Auto Mode Aktif  ";
     StatusModeH = "Auto";
-    
+
     if (dhtValues.suhu >= suhuM) {
       digitalWrite(fan, LOW);
       statusFan = true;
     } else if (dhtValues.suhu <= suhuR) {
+      digitalWrite(fan, HIGH);
+      statusFan = false;
+    } else {
       digitalWrite(fan, HIGH);
       statusFan = false;
     }
@@ -592,13 +675,17 @@ void mode(bool &statusFan, bool &statusPump, String &statusMode, String &StatusM
     } else if (dhtValues.kelembaban >= kelR) {
       digitalWrite(pump, HIGH);
       statusPump = false;
+    } else {
+      digitalWrite(pump, HIGH);  // Matikan pump
+      statusPump = false;
     }
+
   } else if (dataMode == 3) {
     leds[0] = CRGB(255, 128, 0);
     FastLED.show();
     statusMode = "Hybrid Mode Aktif";
     StatusModeH = "Hybrid";
-      
+
     buttonStateFan = digitalRead(buttonFan);
     buttonStatePump = digitalRead(buttonPump);
 
@@ -610,17 +697,21 @@ void mode(bool &statusFan, bool &statusPump, String &statusMode, String &StatusM
       }
     }
     previousButtonStateFan = buttonStateFan;
-    
+
     if (manualFanControl) {
       if (digitalRead(buttonFan) == 0) {
         digitalWrite(fan, !digitalRead(fan));
-        while (digitalRead(buttonFan) == 0);
+        while (digitalRead(buttonFan) == 0)
+          ;
       }
     } else {
       if (dhtValues.suhu >= suhuM) {
         digitalWrite(fan, LOW);
         statusFan = true;
       } else if (dhtValues.suhu <= suhuR) {
+        digitalWrite(fan, HIGH);
+        statusFan = false;
+      } else {
         digitalWrite(fan, HIGH);
         statusFan = false;
       }
@@ -637,7 +728,8 @@ void mode(bool &statusFan, bool &statusPump, String &statusMode, String &StatusM
     if (manualPumpControl) {
       if (digitalRead(buttonPump) == 0) {
         digitalWrite(pump, !digitalRead(pump));
-        while (digitalRead(buttonPump) == 0);
+        while (digitalRead(buttonPump) == 0)
+          ;
       }
     } else {
       if (dhtValues.kelembaban <= kelM) {
@@ -646,6 +738,9 @@ void mode(bool &statusFan, bool &statusPump, String &statusMode, String &StatusM
       } else if (dhtValues.kelembaban >= kelR) {
         digitalWrite(pump, HIGH);
         statusPump = false;
+      } else {
+        digitalWrite(pump, HIGH);  // Matikan pump
+        statusPump = false;
       }
     }
   }
@@ -653,7 +748,7 @@ void mode(bool &statusFan, bool &statusPump, String &statusMode, String &StatusM
 
 void scheduleMode() {
   DateTime now = rtc.now();
-  
+
   byte dataBytes[Length_data];
   int i = 0;
   while (i < Length_data) {
@@ -665,7 +760,7 @@ void scheduleMode() {
   }
 
   String dataScheduleMode = "";
-  
+
   for (int j = 0; j < i; j++) {
     dataScheduleMode += (char)dataBytes[j];
   }

@@ -85,6 +85,11 @@ bool manualPumpControl = false;
 bool previousButtonStatePump = HIGH;
 bool modePaused = false;
 bool pumpRunning = false;
+int Fan;
+int Pump;
+
+unsigned long connectionStatusMillis = 0;
+bool isWiFiConnected = false;
 
 address Address;
 SetPoints setPoints;
